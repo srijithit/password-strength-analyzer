@@ -1,4 +1,4 @@
-// Password Strength Analyzer - Core Logic
+// Password Strength Analyzer - Core Logic & Cyber UI bindings
 
 // Clean wordlist for Diceware passphrase generation (120 memorable words)
 const DICEWARE_WORDS = [
@@ -18,11 +18,10 @@ const DICEWARE_WORDS = [
 
 // Document Elements
 let passwordInput, togglePasswordBtn;
-let strengthLabel, strengthScoreVal, strengthRankVal;
+let strengthScoreVal, strengthRankVal;
+let statusLabel, resultPanel, progressBar, terminalOut;
 let entropyVal, timePC, timeGPU, timeBotnet;
 let checkLength, checkUpper, checkLower, checkNumber, checkSymbol, checkUnique;
-let vulnPanel, vulnDesc;
-let strengthSegments;
 
 // Generator Elements
 let genLengthSlider, genLengthVal;
@@ -35,8 +34,17 @@ let dbUserDisplay, dbLoggedInPanel, dbLoggedOutPanel, btnAuthLogout;
 let currentUsernameSpan, newPasswordInput, btnChangePassword;
 let passwordHistoryList;
 
-// Active Session
+// Active Session & Logs State
 let activeUser = null;
+let logState = {
+    length: false,
+    upper: false,
+    lower: false,
+    number: false,
+    symbol: false,
+    unique: true,
+    empty: true
+};
 
 // Initialize on DOM load
 document.addEventListener("DOMContentLoaded", () => {
@@ -51,30 +59,27 @@ function initDOMElements() {
     // Analyzer Elements
     passwordInput = document.getElementById("password-input");
     togglePasswordBtn = document.getElementById("toggle-password-btn");
-    strengthLabel = document.getElementById("strength-label");
     strengthScoreVal = document.getElementById("strength-score-val");
     entropyVal = document.getElementById("entropy-val");
     strengthRankVal = document.getElementById("strength-rank");
+    
+    statusLabel = document.getElementById("statusLabel");
+    resultPanel = document.getElementById("resultPanel");
+    progressBar = document.getElementById("progressBar");
+    terminalOut = document.getElementById("terminalOut");
     
     // Brute Force Times
     timePC = document.getElementById("time-pc");
     timeGPU = document.getElementById("time-gpu");
     timeBotnet = document.getElementById("time-botnet");
     
-    // Checklist
+    // Checklist tag chips
     checkLength = document.getElementById("check-length");
     checkUpper = document.getElementById("check-upper");
     checkLower = document.getElementById("check-lower");
     checkNumber = document.getElementById("check-number");
     checkSymbol = document.getElementById("check-symbol");
     checkUnique = document.getElementById("check-unique");
-    
-    // Vuln Panel
-    vulnPanel = document.getElementById("vulnerabilities-panel");
-    vulnDesc = document.getElementById("vulnerabilities-desc");
-    
-    // Segments
-    strengthSegments = document.querySelectorAll(".strength-segment");
     
     // Generator
     genLengthSlider = document.getElementById("gen-length");
@@ -93,7 +98,6 @@ function initDOMElements() {
     dbPassword = document.getElementById("db-password");
     btnAuthRegister = document.getElementById("btn-auth-register");
     btnAuthLogin = document.getElementById("btn-auth-login");
-    dbUserDisplay = document.getElementById("db-user-display");
     dbLoggedInPanel = document.getElementById("db-logged-in-panel");
     dbLoggedOutPanel = document.getElementById("db-logged-out-panel");
     btnAuthLogout = document.getElementById("btn-auth-logout");
@@ -115,7 +119,7 @@ function setupEventListeners() {
         // Toggle icon visual
         if (type === "text") {
             togglePasswordBtn.innerHTML = `
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"></path>
                     <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"></path>
                     <path d="M6.61 6.61A13.52 13.52 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"></path>
@@ -124,7 +128,7 @@ function setupEventListeners() {
             `;
         } else {
             togglePasswordBtn.innerHTML = `
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"></path>
                     <circle cx="12" cy="12" r="3"></circle>
                 </svg>
@@ -138,10 +142,34 @@ function setupEventListeners() {
         genLengthVal.textContent = genLengthSlider.value + (isDiceware ? " words" : " chars");
     });
     
+    // Check-chips event listeners to toggling active states
+    const syncChip = (inputEl, chipId) => {
+        const chip = document.getElementById(chipId);
+        inputEl.addEventListener("change", () => {
+            if (inputEl.checked) {
+                chip.classList.remove("unmet");
+                chip.classList.add("met");
+            } else {
+                chip.classList.remove("met");
+                chip.classList.add("unmet");
+            }
+            generateSuggestedPassword();
+        });
+    };
+    
+    syncChip(optUpper, "chip-opt-upper");
+    syncChip(optLower, "chip-opt-lower");
+    syncChip(optNumbers, "chip-opt-number");
+    syncChip(optSymbols, "chip-opt-symbol");
+    
     // Generator type toggle (Diceware changes labels)
     optDiceware.addEventListener("change", () => {
         const checked = optDiceware.checked;
+        const chip = document.getElementById("chip-opt-diceware");
         if (checked) {
+            chip.classList.remove("unmet");
+            chip.classList.add("met");
+            
             genLengthSlider.min = 3;
             genLengthSlider.max = 10;
             if (genLengthSlider.value < 3) genLengthSlider.value = 3;
@@ -153,7 +181,15 @@ function setupEventListeners() {
             optLower.disabled = true;
             optNumbers.disabled = true;
             optSymbols.disabled = true;
+            
+            document.getElementById("chip-opt-upper").className = "check-chip unmet";
+            document.getElementById("chip-opt-lower").className = "check-chip unmet";
+            document.getElementById("chip-opt-number").className = "check-chip unmet";
+            document.getElementById("chip-opt-symbol").className = "check-chip unmet";
         } else {
+            chip.classList.remove("met");
+            chip.classList.add("unmet");
+            
             genLengthSlider.min = 8;
             genLengthSlider.max = 64;
             if (genLengthSlider.value < 8) genLengthSlider.value = 16;
@@ -164,6 +200,11 @@ function setupEventListeners() {
             optLower.disabled = false;
             optNumbers.disabled = false;
             optSymbols.disabled = false;
+            
+            document.getElementById("chip-opt-upper").className = optUpper.checked ? "check-chip met" : "check-chip unmet";
+            document.getElementById("chip-opt-lower").className = optLower.checked ? "check-chip met" : "check-chip unmet";
+            document.getElementById("chip-opt-number").className = optNumbers.checked ? "check-chip met" : "check-chip unmet";
+            document.getElementById("chip-opt-symbol").className = optSymbols.checked ? "check-chip met" : "check-chip unmet";
         }
         generateSuggestedPassword();
     });
@@ -214,7 +255,7 @@ function showToast(message) {
     }
     
     toast.innerHTML = `
-        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
             <polyline points="22 4 12 14.01 9 11.01"></polyline>
         </svg>
@@ -225,6 +266,67 @@ function showToast(message) {
     setTimeout(() => {
         toast.classList.remove("show");
     }, 3000);
+}
+
+// -------------------------------------------------------------
+// SECURE CONSOLE LOGGING SYSTEM
+// -------------------------------------------------------------
+function addLog(type, text) {
+    if (!terminalOut) return;
+    
+    const now = new Date();
+    const timeStr = `[${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}]`;
+    
+    const logLine = document.createElement("div");
+    logLine.className = "log-line";
+    
+    let typeClass = "c-info";
+    let prefix = "[+]";
+    
+    if (type === "ok") { typeClass = "c-ok"; prefix = "[✓]"; }
+    else if (type === "warn") { typeClass = "c-warn"; prefix = "[!]"; }
+    else if (type === "danger") { typeClass = "c-danger"; prefix = "[☠]"; }
+    else if (type === "accent") { typeClass = "c-accent"; prefix = "[*]"; }
+    
+    logLine.innerHTML = `
+        <span class="log-ts">${timeStr}</span>
+        <span class="${typeClass}">${prefix} ${text}</span>
+    `;
+    
+    // Find and remove trailing blinking cursor
+    const cursor = terminalOut.querySelector(".cursor");
+    if (cursor) cursor.remove();
+    
+    terminalOut.appendChild(logLine);
+    
+    // Maintain max 14 log lines
+    const logLines = terminalOut.querySelectorAll(".log-line");
+    if (logLines.length > 14) {
+        logLines[0].remove();
+    }
+    
+    // Re-append cursor
+    const newCursorSpan = document.createElement("span");
+    newCursorSpan.className = "cursor";
+    terminalOut.appendChild(newCursorSpan);
+    
+    // Auto-scroll console
+    terminalOut.scrollTop = terminalOut.scrollHeight;
+}
+
+function resetTerminalLogs() {
+    if (!terminalOut) return;
+    terminalOut.innerHTML = `
+        <div class="log-line">
+            <span class="log-ts">[--:--:--]</span>
+            <span class="c-info">[+] console running. Awaiting passcode entry...</span>
+        </div>
+        <div class="log-line">
+            <span class="log-ts">[--:--:--]</span>
+            <span class="c-ok">[✓] local databases loaded. security rules initialized.</span>
+            <span class="cursor"></span>
+        </div>
+    `;
 }
 
 // -------------------------------------------------------------
@@ -251,9 +353,19 @@ function calculateComplexity(password) {
 function updateAnalyzer() {
     const password = passwordInput.value;
     
+    // Reset or start logging checks
     if (password.length === 0) {
+        if (!logState.empty) {
+            logState = { length: false, upper: false, lower: false, number: false, symbol: false, unique: true, empty: true };
+            resetTerminalLogs();
+        }
         resetAnalyzerUI();
         return;
+    }
+    
+    if (logState.empty) {
+        logState.empty = false;
+        addLog("accent", "Awaiting keystrokes... Connection established.");
     }
     
     // 1. Calculate Metrics
@@ -266,21 +378,57 @@ function updateAnalyzer() {
         entropy = len * Math.log2(poolSize);
     }
     
-    // 2. Perform vulnerability and common checks
+    // 2. Perform vulnerability checks
     const commonCheck = window.PasswordDb.isCommon(password);
     
-    // Set entropy to 0 if password is dead common
     if (commonCheck.matched && commonCheck.type === "common_password") {
         entropy = 0;
     }
     
-    // 3. Update checklist UI
+    // 3. Update diagnostic terminal logs based on state changes
+    const hasLen = len >= 8;
+    if (hasLen !== logState.length) {
+        logState.length = hasLen;
+        if (hasLen) addLog("ok", `Min length satisfied: ${len} characters.`);
+        else addLog("warn", "Passcode length too short. 8+ characters required.");
+    }
+    
+    if (pool.uppercase !== logState.upper) {
+        logState.upper = pool.uppercase;
+        if (pool.uppercase) addLog("ok", "Uppercase characters confirmed.");
+        else addLog("info", "No uppercase characters detected.");
+    }
+    
+    if (pool.lowercase !== logState.lower) {
+        logState.lower = pool.lowercase;
+        if (pool.lowercase) addLog("ok", "Lowercase characters confirmed.");
+        else addLog("info", "No lowercase characters detected.");
+    }
+    
+    if (pool.numbers !== logState.number) {
+        logState.number = pool.numbers;
+        if (pool.numbers) addLog("ok", "Numeric digits confirmed.");
+        else addLog("info", "No numeric digits detected.");
+    }
+    
+    if (pool.symbols !== logState.symbol) {
+        logState.symbol = pool.symbols;
+        if (pool.symbols) addLog("ok", "Special symbols confirmed.");
+        else addLog("info", "No special symbols detected.");
+    }
+    
+    const hasUnique = !commonCheck.matched;
+    if (hasUnique !== logState.unique) {
+        logState.unique = hasUnique;
+        if (hasUnique) addLog("ok", "Threat DB checks: passcode is unique.");
+        else addLog("danger", `Threat DB Alert: ${commonCheck.detail}`);
+    }
+    
+    // 4. Update checklist UI
     updateChecklist(password, pool, commonCheck);
     
-    // 4. Calculate Score (0 to 5)
+    // 5. Calculate Score (0 to 5)
     let score = 0;
-    
-    // Rules for scoring:
     if (len >= 8) score++;
     if (len >= 12) score++;
     if (pool.lowercase && pool.uppercase) score++;
@@ -290,23 +438,12 @@ function updateAnalyzer() {
     // Penalties
     if (len < 6) score = Math.min(score, 1);
     if (commonCheck.matched) {
-        // Severe penalty for common passwords or patterns
         if (commonCheck.type === "common_password") score = 0;
         else score = Math.max(0, score - 2);
     }
-    
-    // Cap score at 5
     score = Math.max(0, Math.min(5, score));
     
-    // 5. Update Vulnerabilities UI
-    if (commonCheck.matched) {
-        vulnPanel.classList.add("visible");
-        vulnDesc.innerHTML = `<strong>Vulnerability Warning:</strong> ${commonCheck.detail}`;
-    } else {
-        vulnPanel.classList.remove("visible");
-    }
-    
-    // 6. Update UI labels and colors
+    // 6. Update UI labels, colors, and progress
     updateStrengthVisuals(score, entropy);
     
     // 7. Calculate and update Brute Force Estimates
@@ -314,28 +451,24 @@ function updateAnalyzer() {
 }
 
 function resetAnalyzerUI() {
-    strengthLabel.textContent = "Enter Password";
-    strengthLabel.className = "strength-label";
+    statusLabel.textContent = "IDLE";
+    statusLabel.className = "card-title ml-auto";
     strengthScoreVal.textContent = "0";
     entropyVal.textContent = "0";
     strengthRankVal.textContent = "Checked";
     strengthRankVal.className = "";
+    progressBar.style.width = "0%";
+    resultPanel.className = "result-panel";
     
-    strengthSegments.forEach(seg => {
-        seg.style.backgroundColor = "transparent";
-    });
+    const titleEl = document.getElementById("resultTitle");
+    if (titleEl) titleEl.textContent = "No Passcode Detected";
+    const iconEl = document.getElementById("resultIcon");
+    if (iconEl) iconEl.textContent = "🔍";
     
-    vulnPanel.classList.remove("visible");
-    
-    // Reset Checklist
-    const checks = [checkLength, checkUpper, checkLower, checkNumber, checkSymbol, checkUnique];
-    checks.forEach(chk => {
-        chk.className = "checklist-item unmet";
-        chk.querySelector("svg").outerHTML = `
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="10"></circle>
-            </svg>
-        `;
+    // Reset Checklist chips
+    const chips = [checkLength, checkUpper, checkLower, checkNumber, checkSymbol, checkUnique];
+    chips.forEach(chip => {
+        chip.className = "check-chip unmet";
     });
     
     timePC.textContent = "-";
@@ -345,47 +478,21 @@ function resetAnalyzerUI() {
 
 function updateChecklist(password, pool, commonCheck) {
     const setStatus = (element, state) => {
-        element.className = `checklist-item ${state}`;
-        const svg = element.querySelector("svg");
-        
-        if (state === "met") {
-            svg.outerHTML = `
-                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
-                    <polyline points="22 4 12 14.01 9 11.01"></polyline>
-                </svg>
-            `;
-        } else if (state === "warning") {
-            svg.outerHTML = `
-                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <polygon points="7.86 2 16.14 2 22 7.86 22 16.14 16.14 22 7.86 22 2 16.14 2 7.86 7.86 2"></polygon>
-                    <line x1="12" y1="8" x2="12" y2="12"></line>
-                    <line x1="12" y1="16" x2="12.01" y2="16"></line>
-                </svg>
-            `;
-        } else {
-            svg.outerHTML = `
-                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <circle cx="12" cy="12" r="10"></circle>
-                </svg>
-            `;
-        }
+        element.className = `check-chip ${state}`;
     };
     
-    // Length (>= 12 recommended)
+    // Length
     if (password.length >= 12) setStatus(checkLength, "met");
-    else if (password.length >= 8) setStatus(checkLength, "met"); // Acceptable minimum
+    else if (password.length >= 8) setStatus(checkLength, "met");
     else setStatus(checkLength, "unmet");
     
-    // Capital & Lowercase
+    // Complexity
     setStatus(checkUpper, pool.uppercase ? "met" : "unmet");
     setStatus(checkLower, pool.lowercase ? "met" : "unmet");
-    
-    // Numbers & Symbols
     setStatus(checkNumber, pool.numbers ? "met" : "unmet");
     setStatus(checkSymbol, pool.symbols ? "met" : "unmet");
     
-    // Uniqueness (No vulnerabilities matched)
+    // Uniqueness
     if (commonCheck.matched) {
         setStatus(checkUnique, "warning");
     } else {
@@ -398,49 +505,48 @@ function updateStrengthVisuals(score, entropy) {
     entropyVal.textContent = Math.round(entropy);
     
     const states = [
-        { label: "Very Weak", class: "text-weak", color: "var(--color-weak)", count: 1 },
-        { label: "Weak", class: "text-weak", color: "var(--color-weak)", count: 2 },
-        { label: "Fair", class: "text-fair", color: "var(--color-fair)", count: 3 },
-        { label: "Good", class: "text-good", color: "var(--color-good)", count: 4 },
-        { label: "Strong", class: "text-strong", color: "var(--color-strong)", count: 5 },
-        { label: "Excellent", class: "text-excellent", color: "var(--color-excellent)", count: 5 }
+        { label: "COMPROMISED", class: "text-weak", color: "var(--danger)", progress: "10%", icon: "☠", title: "System Compromised", status: "status-weak" },
+        { label: "WEAK", class: "text-weak", color: "var(--danger)", progress: "25%", icon: "🔓", title: "Weak Credentials", status: "status-weak" },
+        { label: "FAIR", class: "text-fair", color: "var(--warn)", progress: "50%", icon: "⚠️", title: "Moderate Warning", status: "status-fair" },
+        { label: "GOOD", class: "text-good", color: "#ffd60a", progress: "70%", icon: "🛡️", title: "Good Encryption", status: "status-good" },
+        { label: "STRONG", class: "text-strong", color: "var(--accent)", progress: "88%", icon: "🔒", title: "Strong Security", status: "status-strong" },
+        { label: "SECURE", class: "text-excellent", color: "var(--accent3)", progress: "100%", icon: "🔐", title: "Enterprise Secured", status: "status-excellent" }
     ];
     
     const currentState = states[score];
-    strengthLabel.textContent = currentState.label;
-    strengthLabel.className = `strength-label ${currentState.class}`;
     
+    // Status header labels
+    statusLabel.textContent = currentState.label;
+    statusLabel.className = `card-title ml-auto ${currentState.class}`;
+    
+    // Result panels updates
+    resultPanel.className = `result-panel ${currentState.status}`;
+    document.getElementById("resultTitle").textContent = currentState.title;
+    document.getElementById("resultIcon").textContent = currentState.icon;
+    
+    // Progress bar updates
+    progressBar.style.width = currentState.progress;
+    progressBar.style.background = currentState.color;
+    progressBar.style.boxShadow = `0 0 8px ${currentState.color}`;
+    
+    // Rank updates
     const rankLabels = ["High Risk", "Weak", "Moderate", "Good", "Strong", "Excellent"];
     strengthRankVal.textContent = rankLabels[score];
     strengthRankVal.className = currentState.class;
-    
-    // Fill segments
-    strengthSegments.forEach((seg, index) => {
-        if (index < currentState.count) {
-            seg.style.backgroundColor = currentState.color;
-            seg.style.boxShadow = `0 0 8px ${currentState.color}`;
-        } else {
-            seg.style.backgroundColor = "transparent";
-            seg.style.boxShadow = "none";
-        }
-    });
 }
 
 function updateBruteForceEstimates(entropy, isCommon) {
     if (isCommon) {
-        timePC.textContent = "Instant (leaked/common)";
+        timePC.textContent = "Instant (leaked)";
         timeGPU.textContent = "Instant";
         timeBotnet.textContent = "Instant";
         return;
     }
     
-    // C = 2^H
     const combinations = Math.pow(2, entropy);
-    
-    // Speeds:
-    const speedPC = 1e7;      // 10 Million hashes/sec (Standard PC CPU/GPU)
-    const speedGPU = 1e11;     // 100 Billion hashes/sec (Modern High-end Attack Rig)
-    const speedBotnet = 1e15;  // 1 Quadrillion hashes/sec (Advanced Nation State Botnet)
+    const speedPC = 1e7;
+    const speedGPU = 1e11;
+    const speedBotnet = 1e15;
     
     timePC.textContent = formatTime(combinations / speedPC);
     timeGPU.textContent = formatTime(combinations / speedGPU);
@@ -479,7 +585,6 @@ function generateSuggestedPassword() {
     const len = parseInt(genLengthSlider.value);
     
     if (isDiceware) {
-        // Select random words from DICEWARE_WORDS
         const selectedWords = [];
         for (let i = 0; i < len; i++) {
             const index = Math.floor(Math.random() * DICEWARE_WORDS.length);
@@ -488,7 +593,6 @@ function generateSuggestedPassword() {
         const passphrase = selectedWords.join("-");
         suggestionText.textContent = passphrase;
     } else {
-        // Random character password
         const upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
         const lower = "abcdefghijklmnopqrstuvwxyz";
         const numbers = "0123456789";
@@ -514,7 +618,6 @@ function generateSuggestedPassword() {
             mandatoryChars.push(symbols[Math.floor(Math.random() * symbols.length)]);
         }
         
-        // Fallback if none checked
         if (charset === "") {
             charset += lower + numbers;
             mandatoryChars.push(lower[Math.floor(Math.random() * lower.length)]);
@@ -522,7 +625,6 @@ function generateSuggestedPassword() {
         }
         
         let password = "";
-        // Pre-fill with mandatory characters to ensure all criteria are strictly met
         password += mandatoryChars.join("");
         
         const remainingLength = len - mandatoryChars.length;
@@ -531,9 +633,7 @@ function generateSuggestedPassword() {
             password += charset[randomIndex];
         }
         
-        // Shuffle the password to hide pre-filled characters position
         password = password.split('').sort(() => Math.random() - 0.5).join('');
-        
         suggestionText.textContent = password;
     }
 }
@@ -542,7 +642,6 @@ function generateSuggestedPassword() {
 // SECURE PASSWORD HISTORY DATABASE LOGIC
 // -------------------------------------------------------------
 
-// Web Crypto SHA-256 Hasher
 async function hashString(str) {
     const encoder = new TextEncoder();
     const data = encoder.encode(str);
@@ -575,12 +674,11 @@ async function registerUser() {
         return;
     }
     
-    // Hash the password for storage
     const passwordHash = await hashString(password);
     
     db[username] = {
         username: username,
-        passwordHistory: [passwordHash] // Keep track of the last 5 hashes
+        passwordHistory: [passwordHash]
     };
     
     saveUsersDb(db);
@@ -609,7 +707,6 @@ async function loginUser() {
         return;
     }
     
-    // Hash input password and verify against current password (the latest hash)
     const passwordHash = await hashString(password);
     const currentHash = user.passwordHistory[user.passwordHistory.length - 1];
     
@@ -650,8 +747,6 @@ function renderSessionUI() {
     dbLoggedOutPanel.style.display = "none";
     dbLoggedInPanel.style.display = "flex";
     currentUsernameSpan.textContent = activeUser;
-    
-    // Render current hashes in database for training visualization
     renderHashHistory();
 }
 
@@ -667,12 +762,11 @@ function renderHashHistory() {
     
     passwordHistoryList.innerHTML = "";
     
-    // Render starting with the oldest hash
     user.passwordHistory.forEach((hash, idx) => {
         const li = document.createElement("li");
         li.className = "history-item";
         
-        let label = `Password Hash #${idx + 1}`;
+        let label = `Hash #${idx + 1}`;
         if (idx === user.passwordHistory.length - 1) {
             label += " (Active)";
         }
@@ -696,45 +790,38 @@ async function changePassword() {
     const user = db[activeUser];
     if (!user) return;
     
-    // 1. Check strength first
-    const complexity = calculateComplexity(newPassword);
     const commonCheck = window.PasswordDb.isCommon(newPassword);
     const len = newPassword.length;
     
     if (len < 8 || (commonCheck.matched && commonCheck.type === "common_password")) {
-        showToast("Change failed: New password is too weak or compromised.");
+        showToast("Change failed: Password too weak or compromised.");
         return;
     }
     
-    // 2. Hash new password
     const newHash = await hashString(newPassword);
     
-    // 3. Prevent Reuse Check (Core cryptograhic feature)
-    // Check if new hash exists in the password history
     if (user.passwordHistory.includes(newHash)) {
         showToast("Security Block: Cannot reuse any of your last 5 passwords!");
         
-        // Flash the match visual in database history
+        // Highlight historical match
         const hashItems = passwordHistoryList.querySelectorAll(".history-item");
         const matchIdx = user.passwordHistory.indexOf(newHash);
         if (matchIdx !== -1 && hashItems[matchIdx]) {
-            hashItems[matchIdx].style.border = "1.5px solid var(--color-weak)";
-            hashItems[matchIdx].style.background = "rgba(239, 68, 68, 0.1)";
+            hashItems[matchIdx].style.borderColor = "var(--danger)";
+            hashItems[matchIdx].style.background = "rgba(255, 59, 48, 0.08)";
             setTimeout(() => {
-                hashItems[matchIdx].style.border = "1px solid rgba(255, 255, 255, 0.03)";
-                hashItems[matchIdx].style.background = "rgba(255, 255, 255, 0.01)";
+                hashItems[matchIdx].style.borderColor = "var(--border)";
+                hashItems[matchIdx].style.background = "var(--surface2)";
             }, 3000);
         }
         return;
     }
     
-    // 4. Update History (Max 5 items)
     user.passwordHistory.push(newHash);
     if (user.passwordHistory.length > 5) {
-        user.passwordHistory.shift(); // Remove oldest
+        user.passwordHistory.shift();
     }
     
-    // 5. Save and notify
     db[activeUser] = user;
     saveUsersDb(db);
     
@@ -754,13 +841,11 @@ function initBgCanvas() {
     let width = (canvas.width = window.innerWidth);
     let height = (canvas.height = window.innerHeight);
     
-    // Resize handler
     window.addEventListener("resize", () => {
         width = canvas.width = window.innerWidth;
         height = canvas.height = window.innerHeight;
     });
     
-    // Nodes for interactive neural constellation network
     const nodes = [];
     const maxNodes = 60;
     
@@ -771,11 +856,10 @@ function initBgCanvas() {
             vx: (Math.random() - 0.5) * 0.35,
             vy: (Math.random() - 0.5) * 0.35,
             radius: Math.random() * 2 + 1,
-            color: Math.random() > 0.5 ? "rgba(99, 102, 241, 0.55)" : "rgba(6, 182, 212, 0.55)" // Indigo vs Cyan
+            color: Math.random() > 0.5 ? "rgba(30, 111, 255, 0.45)" : "rgba(0, 229, 255, 0.45)" // Neon Blue vs Neon Cyan
         });
     }
     
-    // Faint falling binary code streams
     const streams = [];
     const maxStreams = 18;
     for (let i = 0; i < maxStreams; i++) {
@@ -784,31 +868,14 @@ function initBgCanvas() {
             y: Math.random() * height,
             vy: Math.random() * 0.6 + 0.3,
             chars: Array.from({ length: 6 }, () => Math.random() > 0.5 ? "1" : "0"),
-            opacity: Math.random() * 0.15 + 0.05
+            opacity: Math.random() * 0.12 + 0.04
         });
     }
     
     function animate() {
         ctx.clearRect(0, 0, width, height);
         
-        // 1. Draw subtle background cyber grid layout
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.012)";
-        ctx.lineWidth = 1;
-        const gridSize = 90;
-        for (let x = 0; x < width; x += gridSize) {
-            ctx.beginPath();
-            ctx.moveTo(x, 0);
-            ctx.lineTo(x, height);
-            ctx.stroke();
-        }
-        for (let y = 0; y < height; y += gridSize) {
-            ctx.beginPath();
-            ctx.moveTo(0, y);
-            ctx.lineTo(width, y);
-            ctx.stroke();
-        }
-        
-        // 2. Render falling binary streams
+        // Render falling binary streams
         ctx.font = "9px monospace";
         for (let s of streams) {
             s.y += s.vy;
@@ -818,7 +885,7 @@ function initBgCanvas() {
                 s.vy = Math.random() * 0.6 + 0.3;
             }
             
-            ctx.fillStyle = `rgba(6, 182, 212, ${s.opacity})`;
+            ctx.fillStyle = `rgba(0, 229, 255, ${s.opacity})`;
             for (let idx = 0; idx < s.chars.length; idx++) {
                 if (Math.random() < 0.015) {
                     s.chars[idx] = Math.random() > 0.5 ? "1" : "0";
@@ -827,14 +894,13 @@ function initBgCanvas() {
             }
         }
         
-        // 3. Render drifting nodes and drawing connecting lines
+        // Render constellation nodes
         for (let i = 0; i < nodes.length; i++) {
             const n = nodes[i];
             
             n.x += n.vx;
             n.y += n.vy;
             
-            // Bounce on wall bounds
             if (n.x < 0 || n.x > width) n.vx *= -1;
             if (n.y < 0 || n.y > height) n.vy *= -1;
             
@@ -850,8 +916,8 @@ function initBgCanvas() {
                 const dist = Math.hypot(dx, dy);
                 
                 if (dist < 130) {
-                    const alpha = (1 - dist / 130) * 0.12;
-                    ctx.strokeStyle = `rgba(99, 102, 241, ${alpha})`;
+                    const alpha = (1 - dist / 130) * 0.1;
+                    ctx.strokeStyle = `rgba(30, 111, 255, ${alpha})`;
                     ctx.lineWidth = 0.5;
                     ctx.beginPath();
                     ctx.moveTo(n.x, n.y);
