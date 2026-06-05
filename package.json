@@ -1,0 +1,17 @@
+{
+  "name": "password-strength-analyzer",
+  "version": "1.0.0",
+  "description": "A feature-rich Password Strength Analyzer and cryptography sandbox.",
+  "scripts": {
+    "dev": "npx -y http-server . -p 3000"
+  },
+  "keywords": [
+    "security",
+    "password-strength",
+    "entropy",
+    "cryptography",
+    "sha-256"
+  ],
+  "author": "Antigravity",
+  "license": "ISC"
+}
